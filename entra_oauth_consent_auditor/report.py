@@ -42,7 +42,8 @@ def write_csv(findings: List[Dict], output_dir: str, filename: str = "entra_oaut
         "ResourceDisplayName", "ResourceAppId", "ResourceSpId",
         "PrincipalDisplayName", "PrincipalUPN", "PrincipalId",
         "ConsentType", "Scopes", "RiskyItems", "RiskyCount",
-        "CreatedDateTime", "ExpiryTime"
+        "RiskReason", "RiskNotes",
+        "CreatedDateTime", "ExpiryTime", "ClientPublisher"
     ]
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:

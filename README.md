@@ -7,8 +7,9 @@ A read-only, deterministic CLI tool to audit OAuth consents (delegated grants) a
 ## Features
 
 - **Audit Delegated Grants:** Lists all OAuth2 permission grants, resolving users, clients, and resources.
-- **Audit App Roles:** Identifies Service Principals with risky assignments to Microsoft Graph.
-- **Risk Scoring:** automatically flags risky permissions (e.g., `ReadWrite`, `Directory.AccessAsUser.All`, etc.).
+- **Audit App Roles:** Identifies Service Principals with risky assignments to Microsoft Graph (Optimized: audits assignments *to* Graph rather than iterating all SPs).
+- **Risk Scoring:** Automatically flags risky permissions (e.g., `ReadWrite`, `Directory.AccessAsUser.All`). Includes `RiskReason` and `RiskNotes`.
+- **Resilient:** Retries on 429 (Throttling) and 5xx (Server Errors).
 - **Deterministic:** Outputs sorted, stable CSV and JSON files for diffability.
 - **Safe:** Read-only operations.
 
@@ -33,15 +34,9 @@ A read-only, deterministic CLI tool to audit OAuth consents (delegated grants) a
 
 The App Registration requires the following **Application Permissions** (granted via Admin Consent):
 
-- `DelegatedPermissionGrant.ReadWrite.All` (for auditing grants - Read-Only would be ideal but Graph usually requires ReadWrite for full enumeration on this endpoint, though `DelegatedPermissionGrant.Read.All` is preferred if available/sufficient. The tool ONLY uses GET.)
-  - *Correction:* `Directory.Read.All` is often sufficient for reading grants in some contexts, but `DelegatedPermissionGrant.Read.All` is specific.
+- `DelegatedPermissionGrant.ReadWrite.All` (or `Directory.Read.All` / `DelegatedPermissionGrant.Read.All`)
 - `AppRoleAssignment.Read.All` (to read app role assignments)
-- `Directory.Read.All` (to resolve Display Names of users and service principals)
-
-**Recommended Minimum Set:**
-- `directory.read.all`
-- `delegatedpermissiongrant.read.all`
-- `approleassignment.read.all`
+- `Directory.Read.All` (to resolve Display Names)
 
 ## Usage
 
@@ -54,31 +49,35 @@ entra-oauth-consent-auditor --help
 # Audit and save to default out/ directory
 entra-oauth-consent-auditor
 
-# Audit only risky findings and fail if any found (for CI/CD)
+# Exclude specific audit types
+entra-oauth-consent-auditor --no-app-roles
+entra-oauth-consent-auditor --no-delegated
+
+# Audit only risky findings and fail if any found
 entra-oauth-consent-auditor --only-risky --fail-on-risk
 
 # Custom output directory
 entra-oauth-consent-auditor --output-dir ./audit_reports
-
-# Run quietly (no stdout, just result code)
-entra-oauth-consent-auditor --quiet
 ```
 
 ## Output Schema
 
 Reports are generated in the `out/` directory (by default).
 
-- **`entra_oauth_consent_auditor.csv`**: Flat file suitable for Excel/Splunk.
-- **`entra_oauth_consent_auditor.json`**: Structured file with metadata and summary counts.
+- **`entra_oauth_consent_auditor.csv`**: Flat file.
+- **`entra_oauth_consent_auditor.json`**: Structured file with metadata and summary.
 
 ### CSV Columns
 - `FindingType`: `DELEGATED_GRANT` or `APP_ROLE_ASSIGNMENT`
 - `ClientDisplayName`, `ClientAppId`: The app initiating the access.
+- `ClientPublisher`: Verified publisher of the client app.
 - `ResourceDisplayName`: The API being accessed (e.g., Microsoft Graph).
 - `PrincipalDisplayName`, `PrincipalUPN`: The user (delegated) or empty (app-only).
 - `Scopes`: The permissions granted.
 - `RiskyItems`: Subset of scopes deemed risky.
 - `RiskyCount`: Number of risky items.
+- `RiskReason`: Why this was flagged (e.g., `TenantWideConsent`, `RiskyGraphAppRole`).
+- `RiskNotes`: Details on the risk.
 - `ConsentType`: `Principal` (User) or `AllPrincipals` (Admin).
 
 ## Customizing Risk Rules

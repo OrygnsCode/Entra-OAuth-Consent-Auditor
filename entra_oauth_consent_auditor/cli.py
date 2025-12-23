@@ -3,6 +3,9 @@ import os
 import sys
 import json
 import logging
+import json
+import logging
+import traceback
 from dotenv import load_dotenv
 
 from . import __version__
@@ -47,8 +50,9 @@ def main():
     parser.add_argument("--fail-on-risk", action="store_true", help="Exit with code 2 if any risky findings are detected")
     
     # Intentionally string defaults to allow logic to handle defaults
-    parser.add_argument("--include-app-roles", type=str, default="true", help="Include App Role Assignments (default: true)")
-    parser.add_argument("--include-delegated", type=str, default="true", help="Include Delegated Grants (default: true)")
+    # Intentionally store_true for "no" flags to be safe defaults
+    parser.add_argument("--no-app-roles", action="store_true", help="Skip App Role Assignments")
+    parser.add_argument("--no-delegated", action="store_true", help="Skip Delegated Grants")
     
     parser.add_argument("--risk-scopes-json", help="Path to JSON file containing list of risky delegated scopes")
     parser.add_argument("--risk-roles-json", help="Path to JSON file containing list of risky app roles")
@@ -68,8 +72,8 @@ def main():
         logger.setLevel(logging.INFO)
 
     # Validate inputs
-    include_app = args.include_app_roles.lower() != "false"
-    include_delegated = args.include_delegated.lower() != "false"
+    include_app = not args.no_app_roles
+    include_delegated = not args.no_delegated
     
     # Get credentials
     tenant_id = os.environ.get("TENANT_ID")
@@ -104,8 +108,9 @@ def main():
             sys.exit(130)
         except Exception as e:
             logger.error(f"Error auditing delegated grants: {e}")
+        except Exception as e:
+            logger.error(f"Error auditing delegated grants: {e}")
             if args.debug:
-                import traceback
                 traceback.print_exc()
     
     if include_app:

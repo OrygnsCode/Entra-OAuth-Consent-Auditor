@@ -131,6 +131,7 @@ class Auditor:
             client_sp = self.resolver.get_service_principal(client_sp_id)
             client_display = client_sp.get('displayName', '')
             client_app_id = client_sp.get('appId', '')
+            client_publisher = client_sp.get('verifiedPublisher', {}).get('displayName', '')
             
             # Resolve Resource
             resource_sp = self.resolver.get_service_principal(resource_sp_id)
@@ -154,6 +155,18 @@ class Auditor:
                 if s and self._is_scope_risky(s):
                     risky_items.append(s)
             
+            # Risk Analysis
+            risk_reasons = []
+            if g.get('consentType') == "AllPrincipals":
+                risk_reasons.append("TenantWideConsent")
+            
+            if not client_publisher and client_display != "Microsoft Graph": 
+                 # 'Microsoft Graph' check is just a safeguard, usually client is an app
+                 risk_reasons.append("UnverifiedPublisher")
+
+            if risky_items:
+                risk_reasons.append("HighImpactScope")
+
             findings.append({
                 "FindingType": "DELEGATED_GRANT",
                 "ClientDisplayName": client_display,
@@ -169,71 +182,88 @@ class Auditor:
                 "Scopes": scope_string,
                 "RiskyItems": ",".join(sorted(risky_items)),
                 "RiskyCount": len(risky_items),
+                "RiskReason": ",".join(risk_reasons),
+                "RiskNotes": ",".join(sorted(risky_items)),
                 "CreatedDateTime": g.get('startTime'), # oauth2PermissionGrants uses startTime
                 "ExpiryTime": g.get('expiryTime'),
+                "ClientPublisher": client_publisher
             })
             
         return findings
 
     def audit_app_roles(self) -> List[Dict]:
-        logger.info("Auditing App Role Assignments (Application Permissions)...")
+        logger.info("Auditing App Role Assignments (Application Permissions) via Graph SP...")
         self._get_graph_sp_details()
         if not self.graph_sp_id:
             return []
 
         findings = []
         
-        # Iterate all SPs to find their assignments TO Graph
-        # Note: /servicePrincipals?$select=id,appId,displayName
-        # We must iterate ALL SPs. This can be heavy.
-        # Optimized way: None easily available without filtering on resourceId 
-        # but appRoleAssignments doesn't support filtering on resourceId globally on v1.0 usually?
-        # Actually: GET /servicePrincipals/{id}/appRoleAssignments
-        # We have to loop.
+        # Optimization: Fetch assignments TO Microsoft Graph (reverse lookup)
+        # GET /servicePrincipals/{graphSpId}/appRoleAssignedTo
+        # This lists who has been assigned roles ON the Graph SP.
         
-        all_sps = self.client.get_all("/servicePrincipals?$select=id,appId,displayName")
+        endpoint = f"/servicePrincipals/{self.graph_sp_id}/appRoleAssignedTo"
+        assignments = self.client.get_all(endpoint)
         
-        for sp in all_sps:
-            sp_id = sp['id']
-            sp_display = sp.get('displayName')
-            sp_app_id = sp.get('appId')
-            
-            # Get assignments for this SP (as client)
-            try:
-                # Filter for Graph assignments only
-                assignments = self.client.get_all(f"/servicePrincipals/{sp_id}/appRoleAssignments?$filter=resourceId eq '{self.graph_sp_id}'")
-                
-                for assign in assignments:
-                    role_id = assign.get('appRoleId')
-                    if role_id == "00000000-0000-0000-0000-000000000000":
-                        # Default role, ignore
-                        continue
-                        
-                    role_val = self.graph_app_roles.get(role_id, f"Unknown-Role-{role_id}")
-                    
-                    is_risky = self._is_role_risky(role_val)
-                    risky_items = [role_val] if is_risky else []
-                    
-                    findings.append({
-                        "FindingType": "APP_ROLE_ASSIGNMENT",
-                        "ClientDisplayName": sp_display,
-                        "ClientAppId": sp_app_id,
-                        "ClientSpId": sp_id,
-                        "ResourceDisplayName": "Microsoft Graph", # Fixed since we filtered
-                        "ResourceAppId": "00000003-0000-0000-c000-000000000000",
-                        "ResourceSpId": self.graph_sp_id,
-                        "PrincipalDisplayName": "", # N/A for app-only
-                        "PrincipalUPN": "", # N/A
-                        "PrincipalId": "", # N/A
-                        "ConsentType": "Application",
-                        "Scopes": role_val, # Use Scopes col for the role name
-                        "RiskyItems": ",".join(risky_items),
-                        "RiskyCount": len(risky_items),
-                        "CreatedDateTime": assign.get('createdDateTime'),
-                        "ExpiryTime": "", # Usually null for app roles
-                    })
+        for assign in assignments:
+            principal_id = assign.get('principalId')
+            principal_type = assign.get('principalType')
+            role_id = assign.get('appRoleId')
 
-            except Exception as e:
-                logger.error(f"Error checking assignments for SP {sp_display} ({sp_id}): {e}")
+            if role_id == "00000000-0000-0000-0000-000000000000":
+                # Default role
+                continue
+
+            # Resolve Client (The Principal who has the role)
+            client_display = "Unknown"
+            client_app_id = "Unknown"
+            client_publisher = ""
+            
+            if principal_type == "ServicePrincipal":
+                sp = self.resolver.get_service_principal(principal_id)
+                client_display = sp.get('displayName', 'Unknown')
+                client_app_id = sp.get('appId', 'Unknown')
+                client_publisher = sp.get('verifiedPublisher', {}).get('displayName', '')
+            elif principal_type == "User":
+                # Uncommon for app-only roles, but possible for some role types? 
+                # Usually app roles assigned to users are for accessing the app, not Graph.
+                # However, appRoleAssignedTo returns all assignments.
+                # We care about ServicePrincipals (App-only access).
+                # But let's log it anyway if found.
+                user = self.resolver.get_user(principal_id)
+                client_display = user.get('displayName', 'Unknown')
+                client_app_id = user.get('userPrincipalName', 'Unknown') # Re-using field
+            
+            role_val = self.graph_app_roles.get(role_id, f"Unknown-Role-{role_id}")
+            
+            is_risky = self._is_role_risky(role_val)
+            risky_items = [role_val] if is_risky else []
+            
+            risk_reasons = []
+            if is_risky:
+                risk_reasons.append("RiskyGraphAppRole")
+            
+            findings.append({
+                "FindingType": "APP_ROLE_ASSIGNMENT",
+                "ClientDisplayName": client_display,
+                "ClientAppId": client_app_id,
+                "ClientSpId": principal_id,
+                "ResourceDisplayName": "Microsoft Graph",
+                "ResourceAppId": "00000003-0000-0000-c000-000000000000",
+                "ResourceSpId": self.graph_sp_id,
+                "PrincipalDisplayName": "", 
+                "PrincipalUPN": "", 
+                "PrincipalId": "", 
+                "ConsentType": "Application",
+                "Scopes": role_val, 
+                "RiskyItems": ",".join(risky_items),
+                "RiskyCount": len(risky_items),
+                "RiskReason": ",".join(risk_reasons),
+                "RiskNotes": ",".join(risky_items),
+                "CreatedDateTime": assign.get('createdDateTime'),
+                "ExpiryTime": "",
+                "ClientPublisher": client_publisher
+            })
                 
         return findings

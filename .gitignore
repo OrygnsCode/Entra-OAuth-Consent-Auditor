@@ -206,3 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 out/
+out_test/
+out_test_only_risky/
+out_test2/
+.DS_Store

@@ -3,8 +3,6 @@ import os
 import sys
 import json
 import logging
-import json
-import logging
 import traceback
 from dotenv import load_dotenv
 
@@ -106,8 +104,6 @@ def main():
         except KeyboardInterrupt:
             logger.info("Audit interrupted by user.")
             sys.exit(130)
-        except Exception as e:
-            logger.error(f"Error auditing delegated grants: {e}")
         except Exception as e:
             logger.error(f"Error auditing delegated grants: {e}")
             if args.debug:

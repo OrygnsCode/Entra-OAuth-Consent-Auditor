@@ -24,7 +24,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'entra-oauth-consent-auditor=entra_oauth_consent_auditor.__main__:main',
+            'entra-oauth-consent-auditor=entra_oauth_consent_auditor.cli:main',
         ],
     },
     classifiers=[

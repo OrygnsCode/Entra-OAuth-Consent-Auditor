@@ -89,3 +89,7 @@ entra-oauth-consent-auditor --risk-scopes-json my_scopes.json --risk-roles-json 
 ```
 
 Format of JSON: `["Scope1", "Scope2", ...]`
+
+---
+
+Built by [Orygn](https://orygn.tech), custom software and security tooling for small businesses and growing teams.
